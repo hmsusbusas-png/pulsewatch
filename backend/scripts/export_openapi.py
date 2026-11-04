@@ -1,16 +1,18 @@
-"""Write the API contract to the repository root."""
-
 import json
 from pathlib import Path
 
 from app.main import app
 
+TARGETS = (
+    Path(__file__).resolve().parents[2] / "openapi.json",
+    Path(__file__).resolve().parents[2] / "frontend" / "public" / "openapi.json",
+)
+
 
 def main() -> None:
-    schema = app.openapi()
-    target = Path(__file__).resolve().parent.parent.parent / "openapi.json"
-    target.write_text(json.dumps(schema, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"wrote {target} with {len(schema['paths'])} paths")
+    content = json.dumps(app.openapi(), indent=2, ensure_ascii=False) + "\n"
+    for target in TARGETS:
+        target.write_text(content, encoding="utf-8", newline="\n")
 
 
 if __name__ == "__main__":

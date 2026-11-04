@@ -4,45 +4,61 @@ version = "1.0.0"
 description = "Uptime monitoring API for pulsewatch"
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi>=0.162,<0.170",
-    "uvicorn[standard]>=0.54,<0.60",
-    "sqlalchemy[asyncio]>=2.1,<2.2",
-    "asyncpg>=0.32,<0.33",
-    "alembic>=1.20,<2.0",
-    "apscheduler>=3.11,<4.0",
-    "httpx>=0.28,<0.29",
-    "pydantic>=2.14,<3.0",
-    "pydantic-settings>=2.16,<3.0",
-    "passlib[bcrypt]>=1.7.4,<2.0",
-    "bcrypt==4.0.1",
-    "python-jose[cryptography]>=3.5,<4.0",
-    "email-validator>=2.2,<3.0",
-    "greenlet>=3.5,<4.0",
-    "certifi>=2024.8.30",
+    "cryptography==50.0.2",
+    "fastapi==0.162.0",
+    "uvicorn[standard]==0.54.0",
+    "sqlalchemy[asyncio]==2.1.6",
+    "asyncpg==0.32.0",
+    "alembic==1.20.1",
+    "apscheduler==3.11.3",
+    "httpx==0.28.1",
+    "pydantic==2.14.2",
+    "pydantic-settings==2.16.2",
+    "bcrypt==5.0.0",
+    "PyJWT==2.15.1",
+    "email-validator==2.3.0",
+    "greenlet==3.5.6",
+    "certifi==2026.10.23",
+    "dnspython==2.9.1",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=9.2,<10.0",
-    "pytest-asyncio>=1.4,<2.0",
-    "ruff>=0.17,<0.18",
-    "mypy>=1.11",
+    "pip-audit==2.10.1",
+    "pre-commit==4.7.0",
+    "pytest-cov==7.1.0",
+    "pytest==9.2.0",
+    "pytest-asyncio==1.4.1.post1",
+    "ruff==0.17.3",
+    "mypy==2.4.1",
 ]
+
+[build-system]
+requires = ["setuptools==84.2.1"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
+allowed-confusables = ["А", "Б", "В", "Г", "Д", "Е", "Ё", "Ж", "З", "И", "Й", "К", "Л", "М", "Н", "О", "П", "Р", "С", "Т", "У", "Ф", "Х", "Ц", "Ч", "Ш", "Щ", "Ъ", "Ы", "Ь", "Э", "Ю", "Я", "а", "б", "в", "г", "д", "е", "ё", "ж", "з", "и", "й", "к", "л", "м", "н", "о", "п", "р", "с", "т", "у", "ф", "х", "ц", "ч", "ш", "щ", "ъ", "ы", "ь", "э", "ю", "я", "-"]
 select = ["E", "F", "I", "UP", "B", "ASYNC", "S", "C4", "SIM", "RET", "PTH", "DTZ", "RUF"]
 ignore = ["S101"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S105", "S106", "S104"]
-"alembic/versions/*" = ["E501"]
+"tests/conftest.py" = ["E402"]
+"../scripts/check_secrets.py" = ["S603"]
+"alembic/versions/*" = ["E501", "S608"]
 "app/config.py" = ["S105"]
 "app/schemas.py" = ["S105"]
 "scripts/*" = ["S105", "S311"]
+"app/demo.py" = ["S311", "S608", "E501"]
+"app/demo_target.py" = ["S311", "S104"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -52,7 +68,7 @@ warn_unused_ignores = false
 exclude = "alembic/versions"
 
 [[tool.mypy.overrides]]
-module = ["passlib.*", "jose.*", "apscheduler.*"]
+module = ["apscheduler.*", "asyncpg.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
@@ -61,3 +77,6 @@ asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.coverage.run]
+concurrency = ["greenlet", "thread"]
