@@ -49,9 +49,11 @@ flowchart LR
 
 ## Быстрый старт
 
-Нужны Docker с Compose v2 и Python 3.
+Нужны Git, Docker с Compose v2 и Python 3.
 
 ```sh
+git clone https://github.com/hmsusbusas-png/pulsewatch
+cd pulsewatch
 python scripts/make_env.py
 docker compose --profile demo up -d --build --wait
 docker compose exec backend python -m app.seed --demo
