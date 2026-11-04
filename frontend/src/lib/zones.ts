@@ -1,0 +1,17 @@
+export const ZONES = [
+  "Europe/Moscow",
+  "Europe/Kaliningrad",
+  "Europe/Samara",
+  "Asia/Yekaterinburg",
+  "Asia/Novosibirsk",
+  "Asia/Krasnoyarsk",
+  "Asia/Irkutsk",
+  "Asia/Vladivostok",
+  "Europe/Minsk",
+  "Asia/Almaty",
+  "Europe/Berlin",
+  "Europe/London",
+  "UTC",
+  "America/New_York",
+  "Asia/Tokyo",
+];

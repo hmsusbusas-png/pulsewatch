@@ -1,0 +1,10 @@
+node_modules
+dist
+test-results
+playwright-report
+blob-report
+e2e
+.playwright-cli
+.planning
+*.log
+*.txt
