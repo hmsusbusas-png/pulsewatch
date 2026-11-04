@@ -19,7 +19,8 @@ def is_blocked_ip(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> boo
     if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
         return is_blocked_ip(address.ipv4_mapped)
     return (
-        address.is_loopback
+        not address.is_global
+        or address.is_loopback
         or address.is_private
         or address.is_link_local
         or address.is_multicast
@@ -29,12 +30,25 @@ def is_blocked_ip(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> boo
 
 
 def normalize_url(raw_url: str) -> str:
+    if any(ord(char) < 33 or ord(char) == 127 for char in raw_url):
+        raise ApiError(400, "invalid_url", "Пробелы и управляющие символы в URL запрещены")
     value = raw_url.strip()
-    parsed = urlparse(value)
+    try:
+        parsed = urlparse(value)
+    except ValueError as exc:
+        raise ApiError(400, "invalid_url", "Некорректный URL") from exc
     if parsed.scheme.lower() not in ALLOWED_SCHEMES:
         raise ApiError(400, "invalid_url", "URL must use http or https scheme")
     if not parsed.hostname:
         raise ApiError(400, "invalid_url", "URL must contain a host")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ApiError(400, "invalid_url", "Некорректный порт") from exc
+    if parsed.username is not None or parsed.password is not None or port == 0:
+        raise ApiError(400, "invalid_url", "Учётные данные в URL и порт 0 запрещены")
+    if port in {22, 25, 2375, 2376, 5432, 6379, 11211, 27017}:
+        raise ApiError(403, "forbidden_port", "Служебный порт запрещён")
     if len(value) > 2048:
         raise ApiError(400, "invalid_url", "URL must be 2048 characters or shorter")
     return value
@@ -43,10 +57,13 @@ def normalize_url(raw_url: str) -> str:
 async def resolve_host(hostname: str, port: int) -> list[str]:
     loop = asyncio.get_running_loop()
     try:
-        infos = await loop.run_in_executor(
-            None, lambda: socket.getaddrinfo(hostname, port, proto=socket.IPPROTO_TCP)
+        infos = await asyncio.wait_for(
+            loop.run_in_executor(
+                None, lambda: socket.getaddrinfo(hostname, port, proto=socket.IPPROTO_TCP)
+            ),
+            timeout=5,
         )
-    except socket.gaierror as exc:
+    except (socket.gaierror, TimeoutError) as exc:
         raise ApiError(400, "unresolvable_host", f"Host {hostname} cannot be resolved") from exc
     addresses: list[str] = []
     for info in infos:
@@ -59,6 +76,7 @@ async def resolve_host(hostname: str, port: int) -> list[str]:
 
 
 async def ensure_target_allowed(url: str, allow_private: bool) -> None:
+    normalize_url(url)
     if allow_private:
         return
     parsed = urlparse(url)

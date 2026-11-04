@@ -1,8 +1,20 @@
 import httpx
 import pytest
 
+from app import ssrf
 from app.errors import ApiError
 from app.ssrf import ensure_target_allowed, is_blocked_ip, normalize_url
+
+
+async def test_dns_timeout_returns_target_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def timed_out(*args: object, **kwargs: object) -> None:
+        raise TimeoutError
+
+    monkeypatch.setattr(ssrf.asyncio, "wait_for", timed_out)
+    with pytest.raises(ApiError) as error:
+        await ensure_target_allowed("https://example.com", allow_private=False)
+    assert error.value.status_code == 400
+    assert error.value.code == "unresolvable_host"
 
 
 def test_private_ranges_are_blocked() -> None:

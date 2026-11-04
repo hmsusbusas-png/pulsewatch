@@ -11,7 +11,7 @@ from app.services.monitoring import (
     calculate_uptime,
     close_open_incident,
     open_incident,
-    process_probe_result,
+    record_probe,
 )
 from app.services.probe import ProbeResult, probe_site
 from app.ssrf import ensure_target_allowed
@@ -52,7 +52,7 @@ async def test_single_failure_keeps_site_up_state(
     client: httpx.AsyncClient, registered_user: dict[str, str]
 ) -> None:
     site_id = await make_site()
-    await process_probe_result(site_id, fail_result())
+    await record_probe(site_id, fail_result())
 
     async with session_factory() as session:
         site = await session.get(Site, site_id)
@@ -69,8 +69,8 @@ async def test_two_failures_open_incident_and_mark_down(
     client: httpx.AsyncClient, registered_user: dict[str, str]
 ) -> None:
     site_id = await make_site()
-    await process_probe_result(site_id, fail_result("timeout"))
-    await process_probe_result(site_id, fail_result("timeout"))
+    await record_probe(site_id, fail_result("timeout"))
+    await record_probe(site_id, fail_result("timeout"))
 
     async with session_factory() as session:
         site = await session.get(Site, site_id)
@@ -88,7 +88,7 @@ async def test_repeated_failures_do_not_duplicate_open_incident(
 ) -> None:
     site_id = await make_site()
     for _ in range(5):
-        await process_probe_result(site_id, fail_result("server error"))
+        await record_probe(site_id, fail_result("server error"))
 
     async with session_factory() as session:
         open_incidents = (
@@ -107,9 +107,9 @@ async def test_recovery_closes_incident(
     client: httpx.AsyncClient, registered_user: dict[str, str]
 ) -> None:
     site_id = await make_site()
-    await process_probe_result(site_id, fail_result())
-    await process_probe_result(site_id, fail_result())
-    await process_probe_result(site_id, ok_result())
+    await record_probe(site_id, fail_result())
+    await record_probe(site_id, fail_result())
+    await record_probe(site_id, ok_result())
 
     async with session_factory() as session:
         site = await session.get(Site, site_id)
@@ -125,11 +125,11 @@ async def test_new_failure_after_recovery_opens_second_incident(
     client: httpx.AsyncClient, registered_user: dict[str, str]
 ) -> None:
     site_id = await make_site()
-    await process_probe_result(site_id, fail_result())
-    await process_probe_result(site_id, fail_result())
-    await process_probe_result(site_id, ok_result())
-    await process_probe_result(site_id, fail_result())
-    await process_probe_result(site_id, fail_result())
+    await record_probe(site_id, fail_result())
+    await record_probe(site_id, fail_result())
+    await record_probe(site_id, ok_result())
+    await record_probe(site_id, fail_result())
+    await record_probe(site_id, fail_result())
 
     async with session_factory() as session:
         incidents = list(await session.scalars(select(Incident).where(Incident.site_id == site_id)))
@@ -145,9 +145,9 @@ async def test_concurrent_failures_create_single_incident(
 
     site_id = await make_site()
     await asyncio.gather(
-        process_probe_result(site_id, fail_result()),
-        process_probe_result(site_id, fail_result()),
-        process_probe_result(site_id, fail_result()),
+        record_probe(site_id, fail_result()),
+        record_probe(site_id, fail_result()),
+        record_probe(site_id, fail_result()),
     )
 
     async with session_factory() as session:
@@ -238,8 +238,8 @@ async def test_incidents_endpoint_lists_history(
         headers=auth_headers,
     )
     site_id = created.json()["id"]
-    await process_probe_result(site_id, fail_result("dns failure"))
-    await process_probe_result(site_id, fail_result("dns failure"))
+    await record_probe(site_id, fail_result("dns failure"))
+    await record_probe(site_id, fail_result("dns failure"))
 
     response = await client.get(f"/api/sites/{site_id}/incidents", headers=auth_headers)
     assert response.status_code == 200
@@ -272,60 +272,52 @@ async def test_probe_reports_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def test_redirect_to_private_address_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
-    redirect_response = httpx.Response(
-        302,
-        headers={"location": "http://127.0.0.1/internal"},
-        request=httpx.Request("GET", "http://93.184.216.34/"),
+    from app.services import probe
+
+    calls = []
+
+    async def fake_target(url: str, allow_private: bool) -> str:
+        if "127.0.0.1" in url:
+            raise probe.RedirectRejected("target address is not allowed")
+        return "93.184.216.34"
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(
+            302, headers={"location": "http://127.0.0.1/internal"}, stream=httpx.ByteStream(b"")
+        )
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(probe, "target_ip", fake_target)
+    monkeypatch.setattr(
+        probe.httpx,
+        "AsyncClient",
+        lambda **kw: real_client(transport=httpx.MockTransport(respond), **kw),
     )
-
-    class FakeClient:
-        def __init__(self, **_: object) -> None:
-            pass
-
-        async def __aenter__(self) -> "FakeClient":
-            return self
-
-        async def __aexit__(self, *_: object) -> None:
-            return None
-
-        async def get(self, url: str) -> httpx.Response:
-            return redirect_response
-
-    monkeypatch.setattr("app.services.probe.httpx.AsyncClient", FakeClient)
     result = await probe_site("http://93.184.216.34/", allow_private=False)
-    assert result.ok is False
-    assert result.error is not None
-    assert "not allowed" in result.error
+    assert not result.ok
+    assert result.error and "not allowed" in result.error
+    assert len(calls) == 1
 
 
 async def test_redirect_to_private_allowed_when_flag_set(monkeypatch: pytest.MonkeyPatch) -> None:
-    redirect_response = httpx.Response(
-        302,
-        headers={"location": "http://127.0.0.1/internal"},
-        request=httpx.Request("GET", "http://127.0.0.1:9000/"),
+    from app.services import probe
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/":
+            return httpx.Response(
+                302, headers={"location": "/internal"}, stream=httpx.ByteStream(b"")
+            )
+        return httpx.Response(200, stream=httpx.ByteStream(b""))
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        probe.httpx,
+        "AsyncClient",
+        lambda **kw: real_client(transport=httpx.MockTransport(respond), **kw),
     )
-    final_response = httpx.Response(
-        200, request=httpx.Request("GET", "http://127.0.0.1:9000/internal")
-    )
-
-    class FakeClient:
-        def __init__(self, **_: object) -> None:
-            self._calls = 0
-
-        async def __aenter__(self) -> "FakeClient":
-            return self
-
-        async def __aexit__(self, *_: object) -> None:
-            return None
-
-        async def get(self, url: str) -> httpx.Response:
-            self._calls += 1
-            return redirect_response if self._calls == 1 else final_response
-
-    monkeypatch.setattr("app.services.probe.httpx.AsyncClient", FakeClient)
-    result = await probe_site("http://127.0.0.1:9000/", allow_private=True)
-    assert result.ok is True
-    assert result.status_code == 200
+    result = await probe_site("http://127.0.0.1/", allow_private=True)
+    assert result.ok
 
 
 async def test_private_target_allowed_in_dev(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -334,4 +326,4 @@ async def test_private_target_allowed_in_dev(monkeypatch: pytest.MonkeyPatch) ->
 
 def test_site_create_schema_validates_interval() -> None:
     with pytest.raises(ValueError):
-        SiteCreateRequest(name="x", url="http://example.com", interval_seconds=30)
+        SiteCreateRequest(name="x", url="http://example.com", interval_seconds=29)

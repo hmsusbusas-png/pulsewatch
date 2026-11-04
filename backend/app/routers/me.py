@@ -1,20 +1,13 @@
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from fastapi import APIRouter
 
 from app.deps import CurrentUser, SessionDep
-from app.schemas import TelegramLinkResponse, UserResponse
-from app.security import generate_link_token
-from app.services.telegram import fetch_bot_username, is_enabled
+from app.errors import ApiError
+from app.schemas import MeUpdate, TelegramLinkResponse, UserResponse
+from app.services import audit
 
 router = APIRouter(prefix="/me", tags=["me"])
-
-DISABLED_INSTRUCTIONS = (
-    "Telegram integration is disabled on this instance because TELEGRAM_BOT_TOKEN is not set. "
-    "The token below becomes usable once the bot is configured."
-)
-LINK_INSTRUCTIONS = (
-    "Open the bot in Telegram and send /start followed by this token. "
-    "The token is single-use and replaced every time you open this screen."
-)
 
 
 @router.get("", response_model=UserResponse)
@@ -22,18 +15,36 @@ async def read_me(user: CurrentUser) -> UserResponse:
     return UserResponse.model_validate(user)
 
 
+@router.patch(
+    "",
+    response_model=UserResponse,
+    summary="Настройки профиля",
+    description="Часовой пояс IANA, в нём фронтенд показывает время.",
+)
+async def update_me(payload: MeUpdate, user: CurrentUser, session: SessionDep) -> UserResponse:
+    try:
+        ZoneInfo(payload.timezone)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ApiError(422, "invalid_timezone", "Неизвестный часовой пояс") from exc
+    if payload.timezone != user.timezone:
+        audit.record(
+            session,
+            user.id,
+            "account.timezone",
+            "account",
+            None,
+            [{"field": "timezone", "old": user.timezone, "new": payload.timezone}],
+        )
+        user.timezone = payload.timezone
+        await session.commit()
+    return UserResponse.model_validate(user)
+
+
 @router.get("/telegram/link", response_model=TelegramLinkResponse)
 async def create_telegram_link(user: CurrentUser, session: SessionDep) -> TelegramLinkResponse:
-    user.telegram_link_token = generate_link_token()
-    await session.commit()
-    if not is_enabled():
-        return TelegramLinkResponse(
-            link_token=user.telegram_link_token,
-            bot_username=None,
-            instructions=DISABLED_INSTRUCTIONS,
-        )
+    from app.routers.telegram import new_link
+
+    link = await new_link(user, session)
     return TelegramLinkResponse(
-        link_token=user.telegram_link_token,
-        bot_username=await fetch_bot_username(),
-        instructions=LINK_INSTRUCTIONS,
+        link_token=link.link_token, bot_username=link.bot_username, instructions=link.instructions
     )

@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from app.database import session_factory
 from app.models import Incident, Site, User
-from app.services.monitoring import process_probe_result
+from app.services.monitoring import record_probe
 from app.services.probe import ProbeResult
 from app.services.telegram import format_down_message, format_recovery_message, parse_start_token
 
@@ -118,8 +118,8 @@ async def test_public_page_reflects_live_status_after_failures(
     client: httpx.AsyncClient, registered_user: dict[str, str]
 ) -> None:
     slug, site_id, _ = await seed_public_site(show_url=False, with_incident=False)
-    await process_probe_result(site_id, ProbeResult(False, None, None, "timeout"))
-    await process_probe_result(site_id, ProbeResult(False, None, None, "timeout"))
+    await record_probe(site_id, ProbeResult(False, None, None, "timeout"))
+    await record_probe(site_id, ProbeResult(False, None, None, "timeout"))
     body = (await client.get(f"/api/status/{slug}")).json()
     assert body["status"] == "down"
     assert len(body["incidents"]) == 1

@@ -1,6 +1,8 @@
 import httpx
 import pytest
 
+from tests.conftest import activate
+
 PUBLIC_TARGET = "http://93.184.216.34/"
 
 
@@ -41,23 +43,36 @@ async def test_site_interval_below_minimum_rejected(
         json={"name": "fast", "url": PUBLIC_TARGET, "interval_seconds": 30},
         headers=auth_headers,
     )
-    assert response.status_code == 422
-    assert response.json()["code"] == "validation_error"
+    assert response.status_code == 402
+    assert response.json()["code"] == "plan_limit_interval"
 
 
 async def test_free_tariff_limit_enforced(
     client: httpx.AsyncClient, auth_headers: dict[str, str]
 ) -> None:
-    for index in range(5):
-        await create_site(client, auth_headers, name=f"site-{index}")
+    from sqlalchemy import select
 
+    from app.database import session_factory
+    from app.models import User
+    from app.services.billing import current_plan, plan_by_code
+
+    async with session_factory() as session:
+        user = await session.scalar(select(User))
+        assert user is not None
+        sub, _ = await current_plan(session, user)
+        sub.plan_id = (await plan_by_code(session, "free")).id
+        sub.status = "active"
+        await session.commit()
+    for index in range(3):
+        created = await client.post(
+            "/api/sites", json={"name": f"site-{index}", "url": PUBLIC_TARGET}, headers=auth_headers
+        )
+        assert created.status_code == 201, created.text
     response = await client.post(
-        "/api/sites",
-        json={"name": "overflow", "url": PUBLIC_TARGET, "interval_seconds": 60},
-        headers=auth_headers,
+        "/api/sites", json={"name": "overflow", "url": PUBLIC_TARGET}, headers=auth_headers
     )
-    assert response.status_code == 403
-    assert response.json()["code"] == "tariff_limit_reached"
+    assert response.status_code == 402
+    assert response.json()["code"] == "plan_limit_sites"
 
 
 async def test_site_owner_isolation(
@@ -68,6 +83,10 @@ async def test_site_owner_isolation(
 
     other = await client.post(
         "/api/auth/register", json={"email": "other@example.com", "password": "supersecret1"}
+    )
+    await activate(client, "other@example.com", "supersecret1")
+    other = await client.post(
+        "/api/auth/login", json={"email": "other@example.com", "password": "supersecret1"}
     )
     other_headers = {"Authorization": f"Bearer {other.json()['access_token']}"}
 
@@ -129,11 +148,11 @@ async def test_checks_range_rejects_unknown_value(
 ) -> None:
     created = await create_site(client, auth_headers)
     site_id = created["id"]
-    response = await client.get(f"/api/sites/{site_id}/checks?range=30d", headers=auth_headers)
+    response = await client.get(f"/api/sites/{site_id}/checks?range=1y", headers=auth_headers)
     assert response.status_code == 422
 
 
-@pytest.mark.parametrize("range_key", ["24h", "7d"])
+@pytest.mark.parametrize("range_key", ["24h", "7d", "30d", "90d"])
 async def test_checks_range_accepts_supported_values(
     client: httpx.AsyncClient, auth_headers: dict[str, str], range_key: str
 ) -> None:

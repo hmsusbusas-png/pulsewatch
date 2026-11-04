@@ -1,30 +1,16 @@
 import httpx
 import pytest
 
-
-async def test_register_returns_access_token_and_sets_refresh_cookie(
-    client: httpx.AsyncClient,
-) -> None:
-    response = await client.post(
-        "/api/auth/register", json={"email": "new@example.com", "password": "supersecret1"}
-    )
-    assert response.status_code == 201
-    body = response.json()
-    assert body["token_type"] == "bearer"
-    assert body["access_token"]
-    cookie = response.cookies.get("refresh_token")
-    assert cookie
-    assert "httponly" in response.headers["set-cookie"].lower()
-    assert "samesite=lax" in response.headers["set-cookie"].lower()
+from tests.conftest import activate
 
 
-async def test_register_rejects_duplicate_email(client: httpx.AsyncClient) -> None:
-    payload = {"email": "dup@example.com", "password": "supersecret1"}
+async def test_registration_does_not_disclose_existing_email(client: httpx.AsyncClient) -> None:
+    payload = {"email": "new@example.com", "password": "supersecret1"}
     first = await client.post("/api/auth/register", json=payload)
-    assert first.status_code == 201
     second = await client.post("/api/auth/register", json=payload)
-    assert second.status_code == 409
-    assert second.json()["code"] == "email_taken"
+    assert first.status_code == second.status_code == 202
+    assert first.json() == second.json() == {"accepted": True}
+    assert "refresh_token" not in first.cookies
 
 
 async def test_register_rejects_short_password(client: httpx.AsyncClient) -> None:
@@ -47,10 +33,14 @@ async def test_login_with_wrong_password_fails(client: httpx.AsyncClient) -> Non
 
 
 async def test_refresh_rotates_token(client: httpx.AsyncClient) -> None:
-    register = await client.post(
+    await client.post(
         "/api/auth/register", json={"email": "rotate@example.com", "password": "supersecret1"}
     )
-    first_token = register.cookies.get("refresh_token")
+    await activate(client, "rotate@example.com", "supersecret1")
+    login = await client.post(
+        "/api/auth/login", json={"email": "rotate@example.com", "password": "supersecret1"}
+    )
+    first_token = login.cookies.get("refresh_token")
     assert first_token
 
     refreshed = await client.post("/api/auth/refresh")
@@ -62,10 +52,14 @@ async def test_refresh_rotates_token(client: httpx.AsyncClient) -> None:
 
 
 async def test_refresh_reuse_revokes_all_tokens(client: httpx.AsyncClient) -> None:
-    register = await client.post(
+    await client.post(
         "/api/auth/register", json={"email": "reuse@example.com", "password": "supersecret1"}
     )
-    stale_token = register.cookies.get("refresh_token")
+    await activate(client, "reuse@example.com", "supersecret1")
+    login = await client.post(
+        "/api/auth/login", json={"email": "reuse@example.com", "password": "supersecret1"}
+    )
+    stale_token = login.cookies.get("refresh_token")
     refreshed = await client.post("/api/auth/refresh")
     fresh_token = refreshed.cookies.get("refresh_token")
     assert fresh_token
@@ -88,10 +82,14 @@ async def test_refresh_without_cookie_fails(client: httpx.AsyncClient) -> None:
 
 
 async def test_logout_revokes_refresh_token(client: httpx.AsyncClient) -> None:
-    register = await client.post(
+    await client.post(
         "/api/auth/register", json={"email": "logout@example.com", "password": "supersecret1"}
     )
-    token = register.cookies.get("refresh_token")
+    await activate(client, "logout@example.com", "supersecret1")
+    login = await client.post(
+        "/api/auth/login", json={"email": "logout@example.com", "password": "supersecret1"}
+    )
+    token = login.cookies.get("refresh_token")
     logout = await client.post("/api/auth/logout")
     assert logout.status_code == 204
 
@@ -111,7 +109,7 @@ async def test_me_requires_valid_access_token(
     )
     assert authorized.status_code == 200
     assert authorized.json()["email"] == "owner@example.com"
-    assert authorized.json()["tariff"] == "free"
+    assert authorized.json()["tariff"] == "pro"
 
 
 @pytest.mark.parametrize("bad_token", ["Bearer", "Bearer nonsense", "Basic abc"])
