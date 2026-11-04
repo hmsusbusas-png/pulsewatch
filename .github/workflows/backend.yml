@@ -1,0 +1,78 @@
+name: backend
+on: [push, pull_request]
+permissions:
+  contents: read
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  security:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - run: go install github.com/zricethezav/gitleaks/v8@v8.30.1
+      - run: |
+          mkdir -p "$RUNNER_TEMP/source-scan"
+          git archive HEAD | tar -x -C "$RUNNER_TEMP/source-scan"
+          gitleaks dir "$RUNNER_TEMP/source-scan" --redact --no-banner --config .gitleaks.toml
+      - run: gitleaks git . --log-opts=--all --redact --no-banner --config .gitleaks.toml
+      - run: python scripts/check_secrets.py
+  backend:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16.15-bookworm
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_DB: pulsewatch_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql+asyncpg://postgres@127.0.0.1:5432/pulsewatch_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --require-hashes -r requirements.lock
+      - run: pip install --no-deps -e '.[dev]'
+      - run: ruff check app scripts tests alembic ../scripts
+      - run: mypy app scripts ../scripts
+      - name: Migrations from scratch, rollback and drift
+        env:
+          APP_ENV: dev
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+        run: |
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
+          alembic check
+      - name: OpenAPI contract is up to date
+        env:
+          APP_ENV: dev
+        run: |
+          python -m scripts.export_openapi
+          git diff --exit-code -- ../openapi.json ../frontend/public/openapi.json
+      - run: pytest --cov=app --cov-report=json
+      - run: python -m scripts.check_coverage
+      - run: pip-audit
+  image:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --pull -t pulsewatch-backend:ci backend
+      - run: docker run --rm pulsewatch-backend:ci python -c "import app.main, app.worker, app.agent, app.demo_target"

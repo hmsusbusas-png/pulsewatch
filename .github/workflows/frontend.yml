@@ -1,0 +1,63 @@
+name: frontend
+
+on:
+  push:
+    paths:
+      - "frontend/**"
+      - "openapi.json"
+      - ".github/workflows/frontend.yml"
+  pull_request:
+    paths:
+      - "frontend/**"
+      - "openapi.json"
+      - ".github/workflows/frontend.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: API types match openapi.json
+        run: |
+          npm run gen:api
+          git diff --exit-code -- src/api/schema.d.ts public/openapi.json
+      - run: npm run lint
+      - run: npx prettier --check src e2e
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm run check:bundle
+      - run: npx playwright install --with-deps chromium
+      - name: Playwright on recorded API responses
+        run: npm run test:e2e
+        env:
+          SCREENSHOT_DIR: ${{ runner.temp }}/screens
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright
+          path: |
+            frontend/test-results
+            ${{ runner.temp }}/screens
+          retention-days: 7
+  image:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --pull -t pulsewatch-frontend:ci frontend
+      - run: docker run --rm --add-host backend:127.0.0.1 pulsewatch-frontend:ci nginx -t

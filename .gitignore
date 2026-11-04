@@ -1,32 +1,48 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-.venv/
-venv/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-htmlcov/
-.coverage
-
-# Environment
 .env
 .env.*
 !.env.example
-
-# Node
+.venv*/
+venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
 node_modules/
 dist/
 dist-ssr/
 .vite/
-*.local
-
-# Editors and OS
-.vscode/
+coverage/
+coverage.json
+.coverage*
+htmlcov/
+*.sqlite*
+*.db
+*.log
+logs/
+*.sql
+*.dump
+*.backup
 .idea/
+.vscode/
 .DS_Store
 Thumbs.db
+/screenshots/
+docs/internal/
+SECURITY_REVIEW.md
+AUDIT.md
+audit-dependencies.json
 
-# Local artifacts
-backend/openapi_cache.json
+/frontend/vite-error.txt
+/frontend/vite-output.txt
+/frontend/test-results/
+/frontend/playwright-report/
+/frontend/blob-report/
+/frontend/e2e/.auth/
+/.agents/
+/.claude/
+/skills-lock.json
+/agent/skills/
+/frontend/.playwright-cli/
+/frontend/.planning/

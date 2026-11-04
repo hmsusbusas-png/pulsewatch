@@ -1,0 +1,168 @@
+x-backend-environment: &app_environment
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-pulsewatch}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-pulsewatch}
+  APP_ENV: ${APP_ENV:-production}
+  JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+  FERNET_KEY: ${FERNET_KEY:?Set FERNET_KEY in .env}
+  COOKIE_SECURE: ${COOKIE_SECURE:-true}
+  CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:8080"]}
+  FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://localhost:8080}
+  API_BASE_URL: ${API_BASE_URL:-http://localhost:8000}
+  PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-yookassa}
+  EMBEDDED_WORKER: "false"
+  WORKER_REGION: ${WORKER_REGION:-msk}
+  WORKER_REGION_NAME: ${WORKER_REGION_NAME:-Москва}
+  TRUSTED_PROXIES: '["172.28.0.10/32"]'
+  EXTRA_CA_FILE: ${EXTRA_CA_FILE:-}
+  REGION_AGENTS: '{"fra":{"name":"Франкфурт","token":"${AGENT_TOKEN_FRA:-}"},"ams":{"name":"Амстердам","token":"${AGENT_TOKEN_AMS:-}"}}'
+
+x-agent: &agent
+  build: ./backend
+  profiles: ["demo"]
+  restart: unless-stopped
+  command: ["python", "-m", "app.agent"]
+  depends_on:
+    backend:
+      condition: service_healthy
+  volumes:
+    - demo_ca:/shared:ro
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://backend:8000/healthz', timeout=3)"]
+    interval: 30s
+    timeout: 5s
+    retries: 3
+  networks: [pulsewatch]
+
+services:
+  postgres:
+    image: postgres:16.15-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-pulsewatch}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-pulsewatch}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pulsewatch} -d ${POSTGRES_DB:-pulsewatch}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks: [pulsewatch]
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment: *app_environment
+    volumes:
+      - demo_ca:/shared:ro
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    networks: [pulsewatch]
+
+  worker:
+    build: ./backend
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    stop_grace_period: 300s
+    depends_on:
+      backend:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment: *app_environment
+    volumes:
+      - demo_ca:/shared:ro
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.healthcheck", "worker"]
+      interval: 20s
+      timeout: 5s
+      retries: 4
+      start_period: 20s
+    networks: [pulsewatch]
+
+  bot:
+    build: ./backend
+    profiles: ["telegram"]
+    restart: unless-stopped
+    command: ["python", "-m", "app.bot"]
+    depends_on:
+      backend:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment: *app_environment
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.healthcheck", "bot"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 35s
+    networks: [pulsewatch]
+
+  demo-target:
+    build: ./backend
+    profiles: ["demo"]
+    restart: unless-stopped
+    command: ["python", "-m", "app.demo_target"]
+    environment:
+      EXTRA_CA_FILE: /shared/demo-ca.pem
+      DEMO_TARGET_HOST: demo-target
+    volumes:
+      - demo_ca:/shared
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks: [pulsewatch]
+
+  agent-fra:
+    <<: *agent
+    environment:
+      WORKER_REGION: fra
+      AGENT_TOKEN: ${AGENT_TOKEN_FRA:-}
+      AGENT_API_URL: http://backend:8000
+      ALLOW_PRIVATE_TARGETS: ${ALLOW_PRIVATE_TARGETS:-false}
+      EXTRA_CA_FILE: ${EXTRA_CA_FILE:-}
+
+  agent-ams:
+    <<: *agent
+    environment:
+      WORKER_REGION: ams
+      AGENT_TOKEN: ${AGENT_TOKEN_AMS:-}
+      AGENT_API_URL: http://backend:8000
+      ALLOW_PRIVATE_TARGETS: ${ALLOW_PRIVATE_TARGETS:-false}
+      EXTRA_CA_FILE: ${EXTRA_CA_FILE:-}
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    networks:
+      pulsewatch:
+        ipv4_address: 172.28.0.10
+
+volumes:
+  postgres_data:
+  demo_ca:
+
+networks:
+  pulsewatch:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24

@@ -1,0 +1,22 @@
+title = "pulsewatch secret checks"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Local artifacts excluded from publication; tracked paths checked separately"
+paths = ['''(?:^|/)(?:\.git|\.venv[^/]*|node_modules|dist|__pycache__|\.mypy_cache|\.pytest_cache|\.ruff_cache|[^/]*\.egg-info|htmlcov|test-results|playwright-report)(?:/|$)''', '''^screenshots/''', '''(?:^|/)docs/internal/''', '''(?:^|/)frontend/vite-(?:error|output)\.txt$''', '''(?:\.log|\.pyc)$''', '''(?:^|/)(?:coverage\.json|audit-dependencies\.json)$''']
+
+[[rules]]
+id = "postgres-credentials"
+description = "Database URL with inline password"
+regex = '''postgres(?:ql)?(?:\+asyncpg)?://[^\s/:]+:[^\s@]+@'''
+
+[[rules.allowlists]]
+regexTarget = "match"
+regexes = ['''\$\{''']
+
+[[rules]]
+id = "personal-home-path"
+description = "Local user path in published text"
+regex = '''(?:[A-Z]:[\\/]Users[\\/]|/h[o]me/[A-Za-z0-9_.-]+)'''
