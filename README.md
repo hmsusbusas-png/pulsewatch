@@ -2,8 +2,8 @@
 
 Pulsewatch проверяет сайты, API, TCP-сервисы, DNS и сертификаты из нескольких регионов, открывает инциденты только после подтверждения сбоя и сообщает о них в нужные каналы и на публичную статус-страницу.
 
-[![backend](https://github.com/hmsusbusas-png/pulsewatch/actions/workflows/backend.yml/badge.svg)](https://github.com/hmsusbusas-png/pulsewatch/actions/workflows/backend.yml)
-[![frontend](https://github.com/hmsusbusas-png/pulsewatch/actions/workflows/frontend.yml/badge.svg)](https://github.com/hmsusbusas-png/pulsewatch/actions/workflows/frontend.yml)
+[![backend](https://github.com/zaxdevv/pulsewatch/actions/workflows/backend.yml/badge.svg)](https://github.com/zaxdevv/pulsewatch/actions/workflows/backend.yml)
+[![frontend](https://github.com/zaxdevv/pulsewatch/actions/workflows/frontend.yml/badge.svg)](https://github.com/zaxdevv/pulsewatch/actions/workflows/frontend.yml)
 [![MIT](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
 ![Журнал мониторов](docs/screenshots/dashboard.png)
@@ -52,7 +52,7 @@ flowchart LR
 Нужны Git, Docker с Compose v2 и Python 3.
 
 ```sh
-git clone https://github.com/hmsusbusas-png/pulsewatch
+git clone https://github.com/zaxdevv/pulsewatch
 cd pulsewatch
 python scripts/make_env.py
 docker compose --profile demo up -d --build --wait
